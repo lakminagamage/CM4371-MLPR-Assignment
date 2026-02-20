@@ -190,7 +190,10 @@ def forecast_24h(model: Prophet, parameter: str) -> pd.DataFrame:
     # naive-Colombo timestamps that Prophet was trained on.
     import pytz
     colombo = pytz.timezone("Asia/Colombo")
-    last_timestamp = pd.Timestamp.now(tz=colombo).normalize().tz_localize(None)
+    # Start at tomorrow's midnight (Colombo local) so the forecast covers the next day
+    last_timestamp = (
+        pd.Timestamp.now(tz=colombo).normalize() + pd.Timedelta(days=1)
+    ).tz_localize(None)
     future_times = pd.date_range(start=last_timestamp, periods=96, freq="15min")
     future_df = pd.DataFrame({"ds": future_times})
 
