@@ -1,0 +1,21 @@
+# Lean dependency list for CI — no Jupyter/notebook packages
+# Pin to match local .venv for reproducibility
+
+datacanvas==1.0.0
+python-dotenv
+
+# Data
+pandas==2.0.3
+numpy==1.24.4
+
+# Modelling
+prophet==1.3.0
+cmdstanpy==1.2.5
+holidays==0.58
+
+# Metrics
+scikit-learn==1.3.2
+
+# Visualisation (needed by pipeline.py for the error heatmap)
+matplotlib==3.7.5
+seaborn==0.13.2
