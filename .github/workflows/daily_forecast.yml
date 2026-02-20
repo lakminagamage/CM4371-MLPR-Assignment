@@ -1,0 +1,123 @@
+name: Daily Weather Forecast
+
+on:
+  # Runs at 9:30 PM IST (UTC+5:30) = 16:00 UTC every day
+  schedule:
+    - cron: '0 16 * * *'
+
+  # Manual trigger for testing — both inputs default to false (full run)
+  workflow_dispatch:
+    inputs:
+      skip_data_fetch:
+        description: 'Skip API fetch — use raw_data.csv already in workspace'
+        type: boolean
+        default: false
+      skip_deploy:
+        description: 'Skip GitHub Pages deploy (dry-run / test pipeline only)'
+        type: boolean
+        default: false
+
+jobs:
+  forecast:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # needed for gh-pages push
+
+    steps:
+      # ── 1. Checkout ─────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ── 2. Python ────────────────────────────────────────────────────────────
+      - name: Set up Python 3.8
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.8'
+          cache: pip
+          cache-dependency-path: requirements-ci.txt
+
+      - name: Install Python dependencies
+        run: pip install -r requirements-ci.txt
+
+      # ── 3. Cache CmdStan (Prophet backend) ──────────────────────────────────
+      #   Prophet compiles a Stan binary on first use; this cache makes
+      #   subsequent runs ~5 min faster.
+      - name: Cache CmdStan
+        id: cache-cmdstan
+        uses: actions/cache@v4
+        with:
+          path: ~/.cmdstan
+          key: cmdstan-${{ runner.os }}-${{ hashFiles('requirements-ci.txt') }}
+
+      - name: Install CmdStan
+        if: steps.cache-cmdstan.outputs.cache-hit != 'true'
+        run: python -c "import cmdstanpy; cmdstanpy.install_cmdstan()"
+
+      # ── 4. Fetch data from API ───────────────────────────────────────────────
+      - name: Fetch data from DataCanvas API
+        if: ${{ !inputs.skip_data_fetch }}
+        env:
+          DATACANVAS_ACCESS_KEY_ID: ${{ secrets.DATACANVAS_ACCESS_KEY_ID }}
+          DATACANVAS_SECRET_KEY:    ${{ secrets.DATACANVAS_SECRET_KEY }}
+          DATACANVAS_PROJECT_ID:    ${{ secrets.DATACANVAS_PROJECT_ID }}
+          DATACANVAS_BASE_URL:      ${{ secrets.DATACANVAS_BASE_URL }}
+        run: python data-gathering.py
+
+      - name: Confirm raw data exists
+        run: |
+          if [ ! -f raw_data.csv ]; then
+            echo "❌ raw_data.csv not found. Either the fetch failed or skip_data_fetch=true with no cached file."
+            exit 1
+          fi
+          echo "✅ raw_data.csv ready — $(wc -l < raw_data.csv) lines"
+
+      # ── 5. Run pipeline ──────────────────────────────────────────────────────
+      - name: Preprocess, train models and export forecast JS
+        run: python pipeline.py
+
+      - name: Confirm forecast output exists
+        run: |
+          if [ ! -f forecast_output.js ]; then
+            echo "❌ forecast_output.js was not produced by pipeline.py"
+            exit 1
+          fi
+          echo "✅ forecast_output.js ready"
+
+      # ── 6. Stage dashboard files ─────────────────────────────────────────────
+      - name: Stage dashboard for deployment
+        run: |
+          mkdir -p dist
+          # dashboard.html loads forecast_output.js from same dir;
+          # serve dashboard.html as index.html so the GH Pages root works.
+          cp dashboard.html      dist/index.html
+          cp forecast_output.js  dist/forecast_output.js
+
+      # ── 7. Deploy to GitHub Pages ────────────────────────────────────────────
+      - name: Deploy to GitHub Pages
+        if: ${{ !inputs.skip_deploy }}
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+          # Keeps a single flat commit — no build history bloat
+          force_orphan: true
+          commit_message: 'chore: forecast update ${{ github.run_id }} [skip ci]'
+
+      # ── 8. Summary ───────────────────────────────────────────────────────────
+      - name: Print job summary
+        if: always()
+        run: |
+          echo "## Forecast Pipeline Summary" >> $GITHUB_STEP_SUMMARY
+          echo "| Step | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Data fetch skipped | ${{ inputs.skip_data_fetch }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Deploy skipped     | ${{ inputs.skip_deploy }} |" >> $GITHUB_STEP_SUMMARY
+          if [ -f model_results.json ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Model Metrics" >> $GITHUB_STEP_SUMMARY
+            echo '```json' >> $GITHUB_STEP_SUMMARY
+            cat model_results.json >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
