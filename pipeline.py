@@ -228,7 +228,7 @@ def plot_error_heatmap(all_metrics: dict, save_path: str = "error_heatmap.png"):
     sns.heatmap(
         normed,
         ax=ax,
-        annot=metrics_df.round(4),   # show real values in cells
+        annot=metrics_df.round(4),
         fmt="g",
         cmap="YlOrRd",
         linewidths=0.5,
@@ -250,7 +250,7 @@ def plot_error_heatmap(all_metrics: dict, save_path: str = "error_heatmap.png"):
     plt.show()
 
 
-# ─── Main Pipeline ───────────────────────────────────────────────────────────
+#Main Pipeline
 
 def run_pipeline():
     # --- Data Cleaning ---
@@ -261,9 +261,6 @@ def run_pipeline():
     df = load_raw_data(RAW_DATA_PATH)
     df = clean_data(df)
 
-    # Convert to local time BEFORE masking/filtering so that
-    # mask_nighttime and extract_daytime operate on local clock hours,
-    # not UTC hours (UTC+0 vs Colombo UTC+5:30 = 5.5-hour offset).
     df.index = df.index.tz_convert("Asia/Colombo")
 
     df = mask_nighttime(df)
@@ -276,7 +273,7 @@ def run_pipeline():
     print(f"[save] Cleaned data  → {CLEANED_DATA_PATH}")
     print(f"[save] Daytime data  → {DAYTIME_DATA_PATH}")
 
-    # --- Model Training & Evaluation ---
+    # Model Training & Evaluation
     print("\n" + "=" * 60)
     print("STEP 2: TRAINING MODELS & EVALUATING ACCURACY")
     print("=" * 60)
@@ -313,7 +310,7 @@ def run_pipeline():
         full_model = train_model(prophet_df, param)
         all_forecasts[param] = forecast_24h(full_model, param)
 
-    # --- Summary ---
+    # Summary
     print("\n" + "=" * 60)
     print("STEP 3: RESULTS SUMMARY")
     print("=" * 60)
@@ -342,7 +339,7 @@ def run_pipeline():
     return all_metrics, all_forecasts
 
 
-# ─── Step 6: Export Forecast JS for Dashboard ────────────────────────────────
+# Export Forecast JS for Dashboard 
 
 PARAM_META = {
     "externaltemp": {
