@@ -186,7 +186,11 @@ def evaluate_model(model: Prophet, test_df: pd.DataFrame, parameter: str) -> dic
 
 def forecast_24h(model: Prophet, parameter: str) -> pd.DataFrame:
     """Generate a 24-hour (96 × 15-min) forecast from now, daytime only."""
-    last_timestamp = pd.Timestamp.now().normalize()
+    # Use Colombo local midnight so forecast timestamps align with the
+    # naive-Colombo timestamps that Prophet was trained on.
+    import pytz
+    colombo = pytz.timezone("Asia/Colombo")
+    last_timestamp = pd.Timestamp.now(tz=colombo).normalize().tz_localize(None)
     future_times = pd.date_range(start=last_timestamp, periods=96, freq="15min")
     future_df = pd.DataFrame({"ds": future_times})
 
@@ -256,6 +260,12 @@ def run_pipeline():
 
     df = load_raw_data(RAW_DATA_PATH)
     df = clean_data(df)
+
+    # Convert to local time BEFORE masking/filtering so that
+    # mask_nighttime and extract_daytime operate on local clock hours,
+    # not UTC hours (UTC+0 vs Colombo UTC+5:30 = 5.5-hour offset).
+    df.index = df.index.tz_convert("Asia/Colombo")
+
     df = mask_nighttime(df)
     df = interpolate_short_gaps(df)
 
@@ -265,9 +275,6 @@ def run_pipeline():
     daytime_df.to_csv(DAYTIME_DATA_PATH)
     print(f"[save] Cleaned data  → {CLEANED_DATA_PATH}")
     print(f"[save] Daytime data  → {DAYTIME_DATA_PATH}")
-
-    # Convert index timezone for Prophet
-    daytime_df.index = daytime_df.index.tz_convert("Asia/Colombo")
 
     # --- Model Training & Evaluation ---
     print("\n" + "=" * 60)
