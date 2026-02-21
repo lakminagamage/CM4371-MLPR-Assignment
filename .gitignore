@@ -16,3 +16,4 @@ daytime_weather_data.csv
 # CI build output
 dist/
 error_heatmap.png
+explainability/

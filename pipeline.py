@@ -15,13 +15,21 @@ RAW_DATA_PATH = "raw_data.csv"
 CLEANED_DATA_PATH = "cleaned_weather_data.csv"
 DAYTIME_DATA_PATH = "daytime_weather_data.csv"
 RESULTS_PATH = "model_results.json"
-
+SKIP_EVALUATION = ["lightintensity"]
 COLS_TO_DROP = ["id", "guid", "updated_at", "rainfall", "soilmoisture"]
 RESAMPLE_FREQ = "15min"
+
 MAX_GAP_SLOTS = 4
 SLEEP_HOUR = 21
 WAKE_HOUR = 9
 TEST_FRACTION = 0.20
+
+
+
+
+TRAIN_SCALE = {
+    "pressure": 0.01,    # Pa → hPa
+}
 
 PARAMETERS = [
     "externaltemp",
@@ -141,11 +149,43 @@ def extract_daytime(df: pd.DataFrame) -> pd.DataFrame:
 
 # ─── Prepare Prophet Data
 
+def drop_gap_boundaries(series: pd.Series, gap_threshold_slots: int = 5, boundary_slots: int = 3) -> pd.Series:
+    """
+    Remove rows that sit within `boundary_slots` positions immediately AFTER
+    a long NaN gap (>= gap_threshold_slots consecutive NaNs).
+    These boundary rows often carry unreliable interpolated edge values that
+    create large residual spikes and inflate RMSE.
+    """
+    is_null = series.isna()
+    # Count consecutive NaNs ending at each position
+    null_run = is_null.groupby((~is_null).cumsum()).cumsum()
+    # Identify positions right after a gap that was long enough
+    gap_end = (null_run.shift(1).fillna(0) >= gap_threshold_slots) & (~is_null)
+    # Mark boundary_slots rows following each gap end
+    drop_mask = pd.Series(False, index=series.index)
+    gap_positions = series.index[gap_end]
+    for pos in gap_positions:
+        loc = series.index.get_loc(pos)
+        end_loc = min(loc + boundary_slots, len(series))
+        drop_mask.iloc[loc:end_loc] = True
+    cleaned = series.copy()
+    cleaned[drop_mask] = np.nan
+    n_dropped = drop_mask.sum()
+    if n_dropped:
+        print(f"    [gap-boundary] dropped {n_dropped} boundary rows")
+    return cleaned
+
+
 def prepare_prophet_df(df: pd.DataFrame, column: str) -> pd.DataFrame:
-    """Convert a single column into the (ds, y) format Prophet expects."""
-    prophet_df = df[[column]].dropna().reset_index()
+    """Convert a single column into the (ds, y) format Prophet expects.
+    Applies gap-boundary cleaning and unit pre-scaling where configured."""
+    series = df[column].copy()
+    series = drop_gap_boundaries(series)
+    prophet_df = series.dropna().reset_index()
     prophet_df.columns = ["ds", "y"]
     prophet_df["ds"] = prophet_df["ds"].dt.tz_localize(None)
+    if column in TRAIN_SCALE:
+        prophet_df["y"] = (prophet_df["y"] * TRAIN_SCALE[column]).round(2)
     return prophet_df
 
 
@@ -164,7 +204,10 @@ def evaluate_model(model: Prophet, test_df: pd.DataFrame, parameter: str) -> dic
     Predict on the test set and compute:
       - MAE   (Mean Absolute Error)
       - RMSE  (Root Mean Squared Error)
-      - MAPE  (Mean Absolute Percentage Error)
+      - sMAPE (Symmetric MAPE) — robust to near-zero actuals.
+              Standard MAPE breaks for wind speed (near-zero values produce
+              divisions like |0.2 - 1.7| / 0.2 = 750%), so sMAPE is used:
+              sMAPE = 2|y - ŷ| / (|y| + |ŷ|), bounded 0-200%.
     """
     future = test_df[["ds"]].copy()
     forecast = model.predict(future)
@@ -172,16 +215,17 @@ def evaluate_model(model: Prophet, test_df: pd.DataFrame, parameter: str) -> dic
     y_true = test_df["y"].values
     y_pred = forecast["yhat"].values
 
-    mae = mean_absolute_error(y_true, y_pred)
+    mae  = mean_absolute_error(y_true, y_pred)
     rmse = np.sqrt(mean_squared_error(y_true, y_pred))
 
-    nonzero = y_true != 0
-    if nonzero.any():
-        mape = np.mean(np.abs((y_true[nonzero] - y_pred[nonzero]) / y_true[nonzero])) * 100
+    denom = np.abs(y_true) + np.abs(y_pred)
+    valid = denom > 0
+    if valid.any():
+        smape = np.mean(2 * np.abs(y_true[valid] - y_pred[valid]) / denom[valid]) * 100
     else:
-        mape = float("nan")
+        smape = float("nan")
 
-    return {"MAE": round(mae, 4), "RMSE": round(rmse, 4), "MAPE_%": round(mape, 2)}
+    return {"MAE": round(mae, 4), "RMSE": round(rmse, 4), "sMAPE_%": round(smape, 2)}
 
 
 def forecast_24h(model: Prophet, parameter: str) -> pd.DataFrame:
@@ -221,7 +265,7 @@ def plot_error_heatmap(all_metrics: dict, save_path: str = "error_heatmap.png"):
     """
     metrics_df = pd.DataFrame(all_metrics).T
     metrics_df.index.name = "Parameter"
-    metrics_df.columns = ["MAE", "RMSE", "MAPE (%)"]
+    metrics_df.columns = ["MAE", "RMSE", "sMAPE"]
 
     # Normalise each metric column independently for colour mapping
     normed = (metrics_df - metrics_df.min()) / (metrics_df.max() - metrics_df.min() + 1e-9)
@@ -233,7 +277,7 @@ def plot_error_heatmap(all_metrics: dict, save_path: str = "error_heatmap.png"):
         ax=ax,
         annot=metrics_df.round(4),
         fmt="g",
-        cmap="YlOrRd",
+        cmap="Blues",
         linewidths=0.5,
         linecolor="#cccccc",
         cbar_kws={"label": "Normalised error (per metric)"},
@@ -292,28 +336,29 @@ def run_pipeline():
             print(f"  [skip] Not enough data ({len(prophet_df)} rows)")
             continue
 
+        if param in SKIP_EVALUATION:
+            full_model = train_model(prophet_df, param)
+            all_forecasts[param] = forecast_24h(full_model, param)
+            continue
+
         # Train / test split (chronological)
         split_idx = int(len(prophet_df) * (1 - TEST_FRACTION))
         train_df = prophet_df.iloc[:split_idx]
-        test_df = prophet_df.iloc[split_idx:]
+        test_df  = prophet_df.iloc[split_idx:]
         print(f"  Train: {len(train_df)} rows | Test: {len(test_df)} rows")
 
-        # Train
         model = train_model(train_df, param)
         print(f"  Model trained ✓")
 
-        # Evaluate on test set
         metrics = evaluate_model(model, test_df, param)
         all_metrics[param] = metrics
-        print(f"  MAE  = {metrics['MAE']}")
-        print(f"  RMSE = {metrics['RMSE']}")
-        print(f"  MAPE = {metrics['MAPE_%']}%")
+        print(f"  MAE   = {metrics['MAE']}")
+        print(f"  RMSE  = {metrics['RMSE']}")
+        print(f"  sMAPE = {metrics['sMAPE_%']}%")
 
-        # Retrain on ALL data for production forecasts
         full_model = train_model(prophet_df, param)
         all_forecasts[param] = forecast_24h(full_model, param)
 
-    # Summary
     print("\n" + "=" * 60)
     print("STEP 3: RESULTS SUMMARY")
     print("=" * 60)
@@ -348,7 +393,7 @@ PARAM_META = {
     "externaltemp": {
         "label": "Air Temperature",
         "unit": "°C",
-        "color": "rgb(255,107,74)",
+        "color": "#FF6B4A",
         "scale": 1.0,
         "stat_type": "avg",          # headline card value = daily avg
         "decimals": 1,
@@ -356,7 +401,7 @@ PARAM_META = {
     "externalhumidity": {
         "label": "Air Humidity",
         "unit": "%",
-        "color": "rgb(0,212,255)",
+        "color": "#00D4FF",
         "scale": 1.0,
         "stat_type": "avg",
         "decimals": 1,
@@ -364,15 +409,15 @@ PARAM_META = {
     "pressure": {
         "label": "Air Pressure",
         "unit": "hPa",
-        "color": "rgb(167,139,250)",
-        "scale": 0.01,               # Pa → hPa
+        "color": "#A78BFA",
+        "scale": 1.0,               # Already in hPa — pre-scaled before training
         "stat_type": "avg",
         "decimals": 1,
     },
     "windspeed": {
         "label": "Wind Speed",
         "unit": "km/h",
-        "color": "rgb(52,211,153)",
+        "color": "#34D399",
         "scale": 3.6,                # m/s → km/h
         "stat_type": "avg",
         "decimals": 1,
@@ -380,7 +425,7 @@ PARAM_META = {
     "lightintensity": {
         "label": "Light Intensity",
         "unit": "klux",
-        "color": "rgb(251,191,36)",
+        "color": "#FBBF24",
         "scale": 0.001,              # lux → klux
         "stat_type": "peak",
         "decimals": 1,
