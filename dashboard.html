@@ -485,6 +485,16 @@
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
 
+// Convert hex colour (#RRGGBB or #RGB) to rgba(...)
+function hexToRgba(hex, alpha) {
+  let h = hex.replace('#', '');
+  if (h.length === 3) h = h.split('').map(c => c + c).join('');
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
 // Timestamp
 $('ts-now').textContent =
   new Date().toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
@@ -610,7 +620,7 @@ function openModal(paramKey) {
   $('modal-stats-row').innerHTML = statsHtml;
 
   // Legend
-  const colorAlpha = p.color.replace('rgb(', 'rgba(').replace(')', ', 0.18)');
+  const colorAlpha = hexToRgba(p.color, 0.18);
   $('modal-legend').innerHTML = `
     <div class="legend-item">
       <div class="legend-dot" style="background:${p.color}"></div>PREDICTED
@@ -631,7 +641,7 @@ function buildChart(paramKey, view) {
   const p = FORECAST_DATA.parameters[paramKey];
   if (!p) return;
 
-  const colorAlpha = p.color.replace('rgb(', 'rgba(').replace(')', ', 0.18)');
+  const colorAlpha = hexToRgba(p.color, 0.18);
 
   // Destroy previous chart
   if (activeChart) { activeChart.destroy(); activeChart = null; }
