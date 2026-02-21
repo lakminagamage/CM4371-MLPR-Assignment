@@ -17,3 +17,4 @@ daytime_weather_data.csv
 dist/
 error_heatmap.png
 explainability/
+.DS_Store
