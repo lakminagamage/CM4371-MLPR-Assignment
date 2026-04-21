@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UoM FIT Weather Station — Weather Forecast</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="forecast_output.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;800&display=swap');
+
+  :root {
+    --bg:       #050d1a;
+    --surface:  #0a1628;
+    --surface2: #0f1f38;
+    --border:   #1a3050;
+    --text:     #c8dff5;
+    --muted:    #4a6a8a;
+    --accent:   #00d4ff;
+
+    --temp-color:     #ff6b4a;
+    --humidity-color: #00d4ff;
+    --pressure-color: #a78bfa;
+    --wind-color:     #34d399;
+    --light-color:    #fbbf24;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Syne', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Background grid */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(0,212,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,212,255,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container {
+    max-width: 1300px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 40px 24px;
+    position: relative;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    z-index: 1;
+  }
+
+  /* ── Header ── */
+  header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    margin-bottom: 48px;
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+
+  .logo-area { display: flex; flex-direction: column; gap: 4px; }
+
+  .logo-tag {
+    font-family: 'Space Mono', monospace;
+    font-size: 11px;
+    color: var(--accent);
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    opacity: 0.8;
+  }
+
+  h1 {
+    font-size: clamp(28px, 4vw, 48px);
+    font-weight: 800;
+    line-height: 1;
+    color: #fff;
+    letter-spacing: -1px;
+  }
+  h1 span { color: var(--accent); }
+
+  .header-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+  }
+
+  .live-badge {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: 'Space Mono', monospace;
+    font-size: 11px;
+    color: var(--accent);
+    letter-spacing: 1px;
+  }
+
+  .live-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%,100% { opacity:1; transform:scale(1); }
+    50%      { opacity:0.4; transform:scale(1.3); }
+  }
+
+  .timestamp {
+    font-family: 'Space Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  /* ── Section heading ── */
+  .section-heading {
+    font-family: 'Space Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 16px;
+  }
+
+  /* ── Stat Cards ── */
+  .stats-row {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 14px;
+    margin-bottom: 48px;
+  }
+
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px 18px 16px;
+    position: relative;
+    overflow: hidden;
+    cursor: pointer;
+    transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+    animation: fadeUp 0.5s ease both;
+  }
+
+  .stat-card:nth-child(1) { animation-delay: 0.05s; }
+  .stat-card:nth-child(2) { animation-delay: 0.10s; }
+  .stat-card:nth-child(3) { animation-delay: 0.15s; }
+  .stat-card:nth-child(4) { animation-delay: 0.20s; }
+  .stat-card:nth-child(5) { animation-delay: 0.25s; }
+
+  @keyframes fadeUp {
+    from { opacity:0; transform:translateY(18px); }
+    to   { opacity:1; transform:translateY(0); }
+  }
+
+  /* top accent bar */
+  .stat-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    border-radius: 14px 14px 0 0;
+  }
+  .stat-card.temp::before     { background: var(--temp-color); }
+  .stat-card.humidity::before { background: var(--humidity-color); }
+  .stat-card.pressure::before { background: var(--pressure-color); }
+  .stat-card.wind::before     { background: var(--wind-color); }
+  .stat-card.light::before    { background: var(--light-color); }
+
+  .stat-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  }
+  .stat-card.temp:hover     { border-color: var(--temp-color); }
+  .stat-card.humidity:hover { border-color: var(--humidity-color); }
+  .stat-card.pressure:hover { border-color: var(--pressure-color); }
+  .stat-card.wind:hover     { border-color: var(--wind-color); }
+  .stat-card.light:hover    { border-color: var(--light-color); }
+
+  .stat-label {
+    font-family: 'Space Mono', monospace;
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+
+  .stat-value {
+    font-size: 34px;
+    font-weight: 800;
+    line-height: 1;
+    margin-bottom: 4px;
+  }
+  .stat-card.temp .stat-value     { color: var(--temp-color); }
+  .stat-card.humidity .stat-value { color: var(--humidity-color); }
+  .stat-card.pressure .stat-value { color: var(--pressure-color); }
+  .stat-card.wind .stat-value     { color: var(--wind-color); }
+  .stat-card.light .stat-value    { color: var(--light-color); }
+
+  .stat-unit {
+    font-family: 'Space Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+
+  .stat-range {
+    font-family: 'Space Mono', monospace;
+    font-size: 9px;
+    color: var(--muted);
+    line-height: 1.6;
+    border-top: 1px solid var(--border);
+    padding-top: 8px;
+    margin-top: 4px;
+  }
+
+  .stat-click-hint {
+    position: absolute;
+    bottom: 10px;
+    right: 12px;
+    font-family: 'Space Mono', monospace;
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 1px;
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+  .stat-card:hover .stat-click-hint { opacity: 1; }
+
+  /* ── Modal Overlay ── */
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(5,13,26,0.88);
+    backdrop-filter: blur(6px);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .modal-overlay.open { display: flex; }
+
+  .modal {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 30px 32px 28px;
+    width: 100%;
+    max-width: 860px;
+    position: relative;
+    animation: modalIn 0.25s ease;
+    box-shadow: 0 24px 80px rgba(0,0,0,0.6);
+  }
+
+  @keyframes modalIn {
+    from { opacity:0; transform:scale(0.95) translateY(16px); }
+    to   { opacity:1; transform:scale(1) translateY(0); }
+  }
+
+  .modal-close {
+    position: absolute;
+    top: 18px; right: 20px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--muted);
+    font-family: 'Space Mono', monospace;
+    font-size: 11px;
+    padding: 5px 12px;
+    cursor: pointer;
+    letter-spacing: 1px;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .modal-close:hover { color: #fff; border-color: var(--accent); }
+
+  .modal-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    margin-bottom: 22px;
+  }
+
+  .modal-color-bar {
+    width: 4px;
+    border-radius: 4px;
+    align-self: stretch;
+    flex-shrink: 0;
+  }
+
+  .modal-title-block { display: flex; flex-direction: column; gap: 4px; }
+
+  .modal-title {
+    font-size: 22px;
+    font-weight: 700;
+    color: #fff;
+  }
+
+  .modal-sub {
+    font-family: 'Space Mono', monospace;
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 1px;
+  }
+
+  .modal-stats-row {
+    display: flex;
+    gap: 24px;
+    margin-left: auto;
+    align-items: flex-end;
+  }
+
+  .modal-stat { text-align: right; }
+  .modal-stat-lbl {
+    font-family: 'Space Mono', monospace;
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 1px;
+    display: block;
+    margin-bottom: 2px;
+  }
+  .modal-stat-val {
+    font-size: 18px;
+    font-weight: 700;
+  }
+
+  .chart-wrapper {
+    position: relative;
+    height: 300px;
+  }
+
+  /* ── View Toggle ── */
+  .view-toggle {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 14px;
+  }
+
+  .view-btn {
+    font-family: 'Space Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    padding: 5px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+  }
+
+  .view-btn.active {
+    background: var(--surface2);
+    color: var(--text);
+    border-color: var(--accent);
+  }
+
+  .view-btn:hover:not(.active) {
+    color: var(--text);
+    border-color: var(--muted);
+  }
+
+  .legend-row {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    margin-top: 14px;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: 'Space Mono', monospace;
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 1px;
+  }
+
+  .legend-dot {
+    width: 9px; height: 9px;
+    border-radius: 2px;
+  }
+
+  /* ── Footer ── */
+  footer {
+    margin-top: auto;
+    padding-top: 48px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  footer span {
+    font-family: 'Space Mono', monospace;
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 1px;
+  }
+  .footer-badge { color: var(--accent); }
+
+  /* ── Responsive ── */
+  @media (max-width: 900px) {
+    .stats-row { grid-template-columns: repeat(3, 1fr); }
+  }
+  @media (max-width: 600px) {
+    .stats-row { grid-template-columns: repeat(2, 1fr); }
+    .modal { padding: 22px 18px 20px; }
+    .chart-wrapper { height: 220px; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <div class="logo-area">
+      <span class="logo-tag">◈ Data From : Datacanvas IoT</span>
+      <h1>Weather <span>Forecast</span></h1>
+    </div>
+    <div class="header-meta">
+      <div class="live-badge">
+        <div class="live-dot"></div>
+        PROPHET MODEL · ACTIVE
+      </div>
+      <div class="timestamp" id="ts-now"></div>
+      <div class="timestamp" id="ts-window">09:30 – 20:30 window</div>
+    </div>
+  </header>
+
+  <div class="section-heading">Tomorrow's Forecast — click a card to view hourly detail</div>
+
+  <!-- Stat Cards -->
+  <div class="stats-row" id="stats-row"></div>
+
+  <footer>
+    <span>MODEL: Facebook Prophet · 15-MIN INTERVALS</span>
+    <span class="footer-badge">◈ Lakmina Gamage | CM4371 - Machine Learning & Pattern Recognition Assignment</span>
+    <span id="footer-gen">—</span>
+  </footer>
+
+</div>
+
+<!-- Modal -->
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal" id="modal">
+    <button class="modal-close" id="modal-close">✕ CLOSE</button>
+    <div class="modal-header">
+      <div class="modal-color-bar" id="modal-color-bar"></div>
+      <div class="modal-title-block">
+        <div class="modal-title"  id="modal-title">—</div>
+        <div class="modal-sub"   id="modal-sub">—</div>
+      </div>
+      <div class="modal-stats-row" id="modal-stats-row"></div>
+    </div>
+    <div class="view-toggle" id="view-toggle">
+      <button class="view-btn active" id="btn-window" onclick="switchView('window')">WINDOW</button>
+      <button class="view-btn" id="btn-24h" onclick="switchView('24h')">24H VIEW</button>
+    </div>
+    <div class="chart-wrapper"><canvas id="modal-chart"></canvas></div>
+    <div class="legend-row" id="modal-legend"></div>
+  </div>
+</div>
+
+<script>
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+
+// Convert hex colour (#RRGGBB or #RGB) to rgba(...)
+function hexToRgba(hex, alpha) {
+  let h = hex.replace('#', '');
+  if (h.length === 3) h = h.split('').map(c => c + c).join('');
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+// Timestamp
+$('ts-now').textContent =
+  new Date().toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+
+// ─── Night‑zone shading plugin for 24h chart ─────────────────────────────────
+const nightShadePlugin = {
+  id: 'nightShade',
+  beforeDraw(chart, _args, opts) {
+    if (!opts.zones || !opts.zones.length) return;
+    const { ctx, chartArea, scales: { x } } = chart;
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,30,0.45)';
+    opts.zones.forEach(([s, e]) => {
+      const x1 = x.getPixelForIndex(s);
+      const x2 = x.getPixelForIndex(e);
+      ctx.fillRect(x1, chartArea.top, x2 - x1, chartArea.bottom - chartArea.top);
+    });
+    ctx.restore();
+  }
+};
+Chart.register(nightShadePlugin);
+
+// ─── Guard: check FORECAST_DATA loaded ───────────────────────────────────────
+if (typeof FORECAST_DATA === 'undefined') {
+  document.body.innerHTML =
+    '<div style="color:#ff6b4a;font-family:monospace;padding:60px;font-size:14px">' +
+    '⚠ forecast_output.js not found.<br>Run <code>python pipeline.py</code> first.' +
+    '</div>';
+  throw new Error('forecast_output.js missing');
+}
+
+// ─── Populate footer ─────────────────────────────────────────────────────────
+$('footer-gen').textContent =
+  'GENERATED · ' + (FORECAST_DATA.generated_at || '').replace('T', ' ');
+$('ts-window').textContent =
+  (FORECAST_DATA.forecast_date || 'Tomorrow') + ' · ' + (FORECAST_DATA.window || '09:30 – 20:30');
+
+// ─── Parameter display order ─────────────────────────────────────────────────
+const PARAM_ORDER = [
+  'externaltemp',
+  'externalhumidity',
+  'pressure',
+  'windspeed',
+  'lightintensity',
+];
+
+const CARD_CLASS = {
+  externaltemp: 'temp',
+  externalhumidity: 'humidity',
+  pressure: 'pressure',
+  windspeed: 'wind',
+  lightintensity: 'light',
+};
+
+// ─── Build Stat Cards ────────────────────────────────────────────────────────
+const statsRow = $('stats-row');
+
+PARAM_ORDER.forEach((key, idx) => {
+  const p = FORECAST_DATA.parameters[key];
+  if (!p) return;
+
+  const cls = CARD_CLASS[key] || '';
+
+  // Determine subtitle label
+  const statLabel = { avg: 'Daily avg', peak: 'Daily peak', min: 'Daily min' }
+    [p.stat_type] || 'Forecast';
+
+  const card = document.createElement('div');
+  card.className = `stat-card ${cls}`;
+  card.innerHTML = `
+    <div class="stat-label">${p.label}</div>
+    <div class="stat-value">${p.stat_value ?? '—'}</div>
+    <div class="stat-unit">${p.unit} · ${statLabel}</div>
+    <div class="stat-range">
+      ↑ Peak &nbsp;${p.peak ?? '—'} ${p.unit}<br>
+      ↓ Min &nbsp;&nbsp;${p.min  ?? '—'} ${p.unit}<br>
+      → Avg &nbsp;&nbsp;${p.avg  ?? '—'} ${p.unit}
+    </div>
+    <div class="stat-click-hint">VIEW CHART ↗</div>
+  `;
+  card.addEventListener('click', () => openModal(key));
+  statsRow.appendChild(card);
+});
+
+// ─── Modal Logic ─────────────────────────────────────────────────────────────
+let activeChart = null;
+let activeParam = null;
+let activeView  = 'window';
+
+function switchView(view) {
+  if (view === activeView) return;
+  activeView = view;
+  $('btn-window').classList.toggle('active', view === 'window');
+  $('btn-24h').classList.toggle('active', view === '24h');
+  buildChart(activeParam, view);
+}
+
+function openModal(paramKey) {
+  activeParam = paramKey;
+  activeView  = 'window';
+  $('btn-window').classList.add('active');
+  $('btn-24h').classList.remove('active');
+  const p = FORECAST_DATA.parameters[paramKey];
+  if (!p) return;
+
+  // Header
+  $('modal-color-bar').style.background = p.color;
+  $('modal-title').textContent = p.label;
+  $('modal-sub').textContent =
+    `${p.unit.toUpperCase()} · ${FORECAST_DATA.window || '09:30 – 20:30'} · PROPHET FORECAST`;
+
+  // Mini stat pills
+  const statsHtml = [
+    { lbl: 'AVG',  val: p.avg  },
+    { lbl: 'PEAK', val: p.peak },
+    { lbl: 'MIN',  val: p.min  },
+  ].map(s => `
+    <div class="modal-stat">
+      <span class="modal-stat-lbl">${s.lbl}</span>
+      <span class="modal-stat-val" style="color:${p.color}">${s.val ?? '—'} ${p.unit}</span>
+    </div>
+  `).join('');
+  $('modal-stats-row').innerHTML = statsHtml;
+
+  // Legend
+  const colorAlpha = hexToRgba(p.color, 0.18);
+  $('modal-legend').innerHTML = `
+    <div class="legend-item">
+      <div class="legend-dot" style="background:${p.color}"></div>PREDICTED
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:${colorAlpha}"></div>CONFIDENCE BAND
+    </div>
+  `;
+
+  // Build chart for the current view
+  buildChart(paramKey, 'window');
+
+  $('modal-overlay').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+
+function buildChart(paramKey, view) {
+  const p = FORECAST_DATA.parameters[paramKey];
+  if (!p) return;
+
+  const colorAlpha = hexToRgba(p.color, 0.18);
+
+  // Destroy previous chart
+  if (activeChart) { activeChart.destroy(); activeChart = null; }
+
+  const is24h = (view === '24h');
+  const slots = is24h ? (p.slots_24h || []) : (p.slots || []);
+
+  const labels    = slots.map(s => s.time);
+  const predicted = slots.map(s => s.predicted ?? null);
+  const lower     = slots.map(s => s.lower     ?? null);
+  const upper     = slots.map(s => s.upper     ?? null);
+
+  // Compute night zones for 24h view (contiguous blocks of is_daytime===false)
+  let nightZones = [];
+  if (is24h) {
+    let start = null;
+    slots.forEach((s, i) => {
+      if (!s.is_daytime && start === null) start = i;
+      if (s.is_daytime && start !== null) { nightZones.push([start, i - 1]); start = null; }
+    });
+    if (start !== null) nightZones.push([start, slots.length - 1]);
+  }
+
+  const ctx = $('modal-chart').getContext('2d');
+  activeChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        // Upper band
+        {
+          label: 'Upper',
+          data: upper,
+          borderWidth: 0,
+          backgroundColor: colorAlpha,
+          fill: '+1',
+          pointRadius: 0,
+          tension: 0.4,
+        },
+        // Lower band
+        {
+          label: 'Lower',
+          data: lower,
+          borderWidth: 0,
+          backgroundColor: colorAlpha,
+          fill: false,
+          pointRadius: 0,
+          tension: 0.4,
+        },
+        // Predicted line
+        {
+          label: 'Predicted',
+          data: predicted,
+          borderColor: p.color,
+          borderWidth: 2.5,
+          backgroundColor: 'transparent',
+          pointRadius: 0,
+          pointHoverRadius: 5,
+          pointHoverBackgroundColor: p.color,
+          tension: 0.4,
+          fill: false,
+          spanGaps: false,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        nightShade: { zones: nightZones },
+        tooltip: {
+          backgroundColor: '#0a1628',
+          borderColor: '#1a3050',
+          borderWidth: 1,
+          titleColor: '#c8dff5',
+          bodyColor: '#4a6a8a',
+          titleFont: { family: 'Space Mono', size: 11 },
+          bodyFont:  { family: 'Space Mono', size: 10 },
+          callbacks: {
+            title: items => items[0].label,
+            label: item => {
+              const u = p.unit;
+              if (item.dataset.label === 'Predicted') return `  Pred:  ${item.raw ?? '—'} ${u}`;
+              if (item.dataset.label === 'Upper')     return `  High:  ${item.raw ?? '—'} ${u}`;
+              if (item.dataset.label === 'Lower')     return `  Low:   ${item.raw ?? '—'} ${u}`;
+              return '';
+            },
+          },
+        },
+      },
+      scales: {
+        x: {
+          ticks: {
+            color: '#4a6a8a',
+            font: { family: 'Space Mono', size: 9 },
+            maxTicksLimit: is24h ? 24 : 14,
+            maxRotation: 0,
+          },
+          grid: { color: 'rgba(26,48,80,0.5)' },
+          border: { color: '#1a3050' },
+        },
+        y: {
+          ticks: {
+            color: '#4a6a8a',
+            font: { family: 'Space Mono', size: 9 },
+            maxTicksLimit: 6,
+          },
+          grid: { color: 'rgba(26,48,80,0.5)' },
+          border: { color: '#1a3050' },
+        },
+      },
+    },
+  });
+
+  // Update legend
+  const nightLegend = is24h ? `
+    <div class="legend-item">
+      <div class="legend-dot" style="background:rgba(0,0,30,0.55);border:1px solid #1a3050"></div>NIGHT
+    </div>` : '';
+  $('modal-legend').innerHTML = `
+    <div class="legend-item">
+      <div class="legend-dot" style="background:${p.color}"></div>PREDICTED
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:${colorAlpha}"></div>CONFIDENCE BAND
+    </div>
+    ${nightLegend}
+  `;
+}
+
+function closeModal() {
+  activeParam = null;
+  $('modal-overlay').classList.remove('open');
+  document.body.style.overflow = '';
+}
+
+$('modal-close').addEventListener('click', closeModal);
+
+// Click outside modal content closes it
+$('modal-overlay').addEventListener('click', e => {
+  if (e.target === $('modal-overlay')) closeModal();
+});
+
+// Escape key
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+</script>
+</body>
+</html>
